@@ -124,6 +124,7 @@
     <Compile Include="Core\Softdatatype.cs" />
     <Compile Include="Core\Utils.cs" />
     <Compile Include="S7CommPlusConnection.cs" />
+    <Compile Include="Patches_a4webdev.cs" />
     <Compile Include="Subscriptions\Subscription.cs" />
   </ItemGroup>
   <ItemGroup>

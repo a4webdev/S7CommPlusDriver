@@ -45,6 +45,12 @@ namespace S7CommPlusDriver
             //      • WinCC Unified PCs and Comfort Panels.
             //  In addition, SINAMICS RT SW, as of version V6.1, and STARTDRIVE, as of version V17, support secure communication
             string sessionVersionPAOMString = ((ValueWString)serverSession.GetStructElement((uint)Ids.LID_SessionVersionSystemPAOMString)).GetValue();
+            // #184 a4webdev fork patch: surface CPU identity/firmware (unreachable via Openness online).
+            CpuSystemVersion = sessionVersionPAOMString;
+            {
+                var _paom = sessionVersionPAOMString.Split(';');
+                if (_paom.Length >= 3) { CpuOrderNumber = _paom[1].Trim(); CpuFirmwareVersion = _paom[2].Trim(); }
+            }
             var reVersions = new Regex(
                 @"^[^;]*;[^;]*[17]\s?(\d{3}).*;[VS](\d{1,2}\.\d+)$",
                 RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase
@@ -144,6 +150,7 @@ namespace S7CommPlusDriver
 
             // Check access level
             UInt32 accessLevel = (getVarSubstreamedRes.Value as ValueUDInt).GetValue();
+            EffectiveProtectionLevelValue = accessLevel; // #184 a4webdev fork patch
             if (accessLevel > AccessLevel.FullAccess && password != "")
             {
                 // Legitimate

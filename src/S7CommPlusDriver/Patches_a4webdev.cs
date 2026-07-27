@@ -1,0 +1,76 @@
+#region License
+/******************************************************************************
+ * S7CommPlusDriver - a4webdev fork patch
+ *
+ * #184 (TiaCommander): expose read-only CPU diagnostics that the protocol
+ * already carries but upstream keeps internal - CPU identity/firmware
+ * (captured at connect, see Legitimation.cs), effective/active protection
+ * level, and the CPU operating state (RUN/STOP). Read-only; no new writes.
+ *
+ * LGPL-3.0-or-later, (C) 2023 Thomas Wiens. Modifications (C) 2026 a4webdev.
+ /****************************************************************************/
+#endregion
+
+using System;
+
+namespace S7CommPlusDriver
+{
+    public partial class S7CommPlusConnection
+    {
+        // Captured during Connect()/legitimate() from the session-version string.
+        // Example CpuSystemVersion: "1;6ES7 215-1HG40-0XB0;V4.5"
+        public string CpuSystemVersion { get; internal set; }
+        public string CpuOrderNumber { get; internal set; }      // "6ES7 215-1HG40-0XB0"
+        public string CpuFirmwareVersion { get; internal set; }  // "V4.5"
+        public uint EffectiveProtectionLevelValue { get; internal set; } // set in legitimate()
+
+        /// <summary>
+        /// Read a single unsigned-integer attribute of an object via GetVarSubstreamed,
+        /// mirroring the pattern legitimate() uses for the protection level.
+        /// </summary>
+        private int ReadUIntAttribute(uint inObjectId, uint address, out uint value)
+        {
+            value = 0;
+            var req = new GetVarSubstreamedRequest(ProtocolVersion.V2);
+            req.InObjectId = inObjectId;
+            req.SessionId = m_SessionId;
+            req.Address = (ushort)address;
+            int res = SendS7plusFunctionObject(req);
+            if (res != 0) return res;
+            m_LastError = 0;
+            WaitForNewS7plusReceived(m_ReadTimeout);
+            if (m_LastError != 0) return m_LastError;
+            var resp = GetVarSubstreamedResponse.DeserializeFromPdu(m_ReceivedPDU);
+            if (resp == null) return S7Consts.errIsoInvalidPDU;
+            var vu = resp.Value as ValueUDInt;
+            if (vu != null) { value = vu.GetValue(); return 0; }
+            var vd = resp.Value as ValueDInt;
+            if (vd != null) { value = (uint)vd.GetValue(); return 0; }
+            var vi = resp.Value as ValueInt;
+            if (vi != null) { value = (uint)vi.GetValue(); return 0; }
+            var vui = resp.Value as ValueUInt;
+            if (vui != null) { value = vui.GetValue(); return 0; }
+            return S7Consts.errIsoInvalidPDU;
+        }
+
+        /// <summary>#184: effective + active protection level (0 = full access).</summary>
+        public int GetProtectionLevels(out uint effective, out uint active)
+        {
+            effective = 0; active = 0;
+            int r1 = ReadUIntAttribute(m_SessionId, (uint)Ids.EffectiveProtectionLevel, out effective);
+            if (r1 != 0) return r1;
+            return ReadUIntAttribute(m_SessionId, (uint)Ids.ActiveProtectionLevel, out active);
+        }
+
+        /// <summary>
+        /// #184: CPU operating state via the exec-unit object. Returns the raw
+        /// protocol value; caller maps to RUN/STOP/STARTUP. May return an error
+        /// if the attribute is not readable on this firmware - recorded, not hidden.
+        /// </summary>
+        public int GetPlcOperatingState(out uint state)
+        {
+            return ReadUIntAttribute((uint)Ids.NativeObjects_theCPUexecUnit_Rid,
+                                     (uint)Ids.CPUexecUnit_operatingStateReq, out state);
+        }
+    }
+}
