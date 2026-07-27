@@ -138,9 +138,14 @@ namespace S7CommPlusDriver
 				m_sslconn = new OpenSSLConnector(m_ptr_ctx, this);
 				m_sslconn.ExpectConnect();
 
-				// Keylog callback setzen
-				m_keylog_cb = new Native.SSL_CTX_keylog_cb_func(SSL_CTX_keylog_cb);
-				Native.SSL_CTX_set_keylog_callback(m_ptr_ctx, m_keylog_cb);
+				// Keylog callback - a4webdev #188: OFF by default (writes TLS session
+				// keys to disk). Opt in with env S7COMMPLUS_KEYLOG=1 for debugging only.
+				var _kl = Environment.GetEnvironmentVariable("S7COMMPLUS_KEYLOG");
+				if (_kl == "1" || string.Equals(_kl, "true", StringComparison.OrdinalIgnoreCase))
+				{
+					m_keylog_cb = new Native.SSL_CTX_keylog_cb_func(SSL_CTX_keylog_cb);
+					Native.SSL_CTX_set_keylog_callback(m_ptr_ctx, m_keylog_cb);
+				}
 
 				m_SslActive = true;
 			} 
