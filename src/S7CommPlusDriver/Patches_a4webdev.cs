@@ -31,6 +31,11 @@ namespace S7CommPlusDriver
         private int ReadUIntAttribute(uint inObjectId, uint address, out uint value)
         {
             value = 0;
+            // #192 S6 RANGE GUARD. GetVarSubstreamedRequest.Address is a UInt16,
+            // so any attribute id >= 65536 silently TRUNCATES and the CPU answers
+            // res=0 with a plausible but WRONG value. A wrong answer is worse than
+            // an error, so reject it before any result can be trusted.
+            if (address > UInt16.MaxValue) return S7Consts.errIsoInvalidPDU;
             var req = new GetVarSubstreamedRequest(ProtocolVersion.V2);
             req.InObjectId = inObjectId;
             req.SessionId = m_SessionId;
