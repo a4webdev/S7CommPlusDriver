@@ -34,7 +34,12 @@ namespace S7CommPlusDriver
     ///     34 | &lt;LinkId:u32&gt; | &lt;count:vlq&gt; | &lt;fields:vlq&gt;
     ///        | &lt;attrId:vlq&gt; ... | objectqualifier | integrityid
     ///
-    /// Verified against S7-1200 firmware V3.0.2 (plaintext) and V4.5 (TLS).
+    /// This request form was observed on the wire, and this implementation has
+    /// been exercised against an S7-1200 at firmware V4.5 over TLS.
+    ///
+    /// It has NOT been exercised against a pre-V4.3 CPU: those refuse InitSsl,
+    /// and the driver has no plaintext session path, so no request of any kind
+    /// reaches them.
     /// </summary>
     class GetMultiVariablesAttrRequest : IS7pRequest
     {
