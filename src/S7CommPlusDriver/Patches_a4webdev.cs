@@ -1,4 +1,4 @@
-#region License
+﻿#region License
 /******************************************************************************
  * S7CommPlusDriver - a4webdev fork patch
  *
@@ -12,6 +12,7 @@
 #endregion
 
 using System;
+using System.Collections.Generic;
 
 namespace S7CommPlusDriver
 {
@@ -77,5 +78,55 @@ namespace S7CommPlusDriver
             return ReadUIntAttribute((uint)Ids.NativeObjects_theCPUexecUnit_Rid,
                                      (uint)Ids.CPUexecUnit_operatingStateReq, out state);
         }
+
+        /// <summary>
+        /// Read raw attribute values from a system object.
+        ///
+        /// Generic transport hook: issues a GetMultiVariables addressed by
+        /// attribute id against a LinkId, and hands back the response PDU
+        /// unparsed. Interpreting the payload is the caller's business - this
+        /// method deliberately knows nothing about any particular object.
+        ///
+        /// Exists as a driver method rather than in a consumer because
+        /// SendS7plusFunctionObject, WaitForNewS7plusReceived and m_ReceivedPDU
+        /// are private; an external assembly cannot reach them.
+        ///
+        /// Read-only. Never throws.
+        /// </summary>
+        /// <param name="linkId">Object to read from.</param>
+        /// <param name="attributeIds">Attribute ids to request.</param>
+        /// <param name="responsePdu">Raw response PDU, or null on failure.</param>
+        /// <returns>0 on success, otherwise an S7Consts error code.</returns>
+        public int ReadAttributes(uint linkId, List<uint> attributeIds, out byte[] responsePdu)
+        {
+            responsePdu = null;
+            if (attributeIds == null || attributeIds.Count == 0) return S7Consts.errIsoInvalidPDU;
+
+            try
+            {
+                var req = new GetMultiVariablesAttrRequest(ProtocolVersion.V2);
+                req.LinkId = linkId;
+                req.AttributeIds = attributeIds;
+
+                int res = SendS7plusFunctionObject(req);
+                if (res != 0) return res;
+
+                m_LastError = 0;
+                WaitForNewS7plusReceived(m_ReadTimeout);
+                if (m_LastError != 0) return m_LastError;
+
+                // SnapshotReceivedPdu() is defined in Patches_a4webdev_Spike192.cs
+                responsePdu = SnapshotReceivedPdu();
+                if (responsePdu == null || responsePdu.Length == 0)
+                    return S7Consts.errIsoInvalidPDU;
+
+                return 0;
+            }
+            catch (Exception)
+            {
+                return S7Consts.errIsoInvalidPDU;
+            }
+        }
+
     }
 }

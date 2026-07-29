@@ -106,6 +106,7 @@
     <Compile Include="Core\ExploreRequest.cs" />
     <Compile Include="Core\ExploreResponse.cs" />
     <Compile Include="Core\Functioncode.cs" />
+    <Compile Include="Core\GetMultiVariablesAttrRequest.cs" />
     <Compile Include="Core\GetMultiVariablesRequest.cs" />
     <Compile Include="Core\GetMultiVariablesResponse.cs" />
     <Compile Include="Core\InitSslRequest.cs" />
