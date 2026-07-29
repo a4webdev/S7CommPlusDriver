@@ -1,0 +1,22 @@
+# This repository is PUBLIC. It exists to satisfy the LGPL source offer for the
+# modified S7CommPlusDriver shipped with TiaCommander, so everything here is
+# read by strangers by design.
+#
+# Internal a4webdev tooling must never be pushed here. It lives on the local
+# `local-tooling` branch and stays there.
+
+# Agent/session tooling and knowledge-graph output
+Agents/
+agents/
+graphify-out/
+.graphifyignore
+
+# Build output
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+.vs/
+
+# TLS session key logs -- never publish these
+key_*.log
