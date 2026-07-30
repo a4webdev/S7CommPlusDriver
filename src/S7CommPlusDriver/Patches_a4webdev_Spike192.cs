@@ -1,4 +1,4 @@
-#region License
+﻿#region License
 /******************************************************************************
  * S7CommPlusDriver - a4webdev fork, #192 SPIKE INSTRUMENT (read-only)
  *
@@ -88,7 +88,7 @@ namespace S7CommPlusDriver
                 // decode failure with no bytes is unrecoverable data loss.
                 outcome.RawPdu = SnapshotReceivedPdu();
 
-                var resp = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, true);
+                var resp = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, !PlaintextSessionActive);
                 if (resp == null) { outcome.ResultCode = S7Consts.errIsoInvalidPDU; outcome.Error = "ExploreResponse.DeserializeFromPdu returned null"; return outcome; }
 
                 int chk = checkResponseWithIntegrity(req, resp);

@@ -632,7 +632,7 @@ namespace S7CommPlusDriver
             }
             else
             {
-                var delObjRes = DeleteObjectResponse.DeserializeFromPdu(m_ReceivedPDU, true);
+                var delObjRes = DeleteObjectResponse.DeserializeFromPdu(m_ReceivedPDU, !PlaintextSessionActive);
                 res = checkResponseWithIntegrity(delObjReq, delObjRes);
                 if (res != 0)
                 {
@@ -845,7 +845,7 @@ namespace S7CommPlusDriver
                 return m_LastError;
             }
 
-            exploreRes = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, true);
+            exploreRes = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, !PlaintextSessionActive);
             res = checkResponseWithIntegrity(exploreReq, exploreRes);
             if (res != 0)
             {
@@ -969,7 +969,7 @@ namespace S7CommPlusDriver
             #endregion
 
             #region Process the response, and build the complete variables list
-            exploreRes = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, true);
+            exploreRes = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, !PlaintextSessionActive);
             res = checkResponseWithIntegrity(exploreReq, exploreRes);
             if (res != 0)
             {
@@ -1291,7 +1291,7 @@ namespace S7CommPlusDriver
                 return m_LastError;
             }
 
-            var exploreRes = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, true);
+            var exploreRes = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, !PlaintextSessionActive);
             res = checkResponseWithIntegrity(exploreReq, exploreRes);
             if (res != 0)
             {
@@ -1401,7 +1401,7 @@ namespace S7CommPlusDriver
                 return m_LastError;
             }
 
-            var exploreRes = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, true);
+            var exploreRes = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, !PlaintextSessionActive);
             res = checkResponseWithIntegrity(exploreReq, exploreRes);
             if (res != 0)
             {
@@ -1460,7 +1460,7 @@ namespace S7CommPlusDriver
                 return m_LastError;
             }
 
-            var exploreRes = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, true);
+            var exploreRes = ExploreResponse.DeserializeFromPdu(m_ReceivedPDU, !PlaintextSessionActive);
             res = checkResponseWithIntegrity(exploreReq, exploreRes);
             if (res != 0)
             {
