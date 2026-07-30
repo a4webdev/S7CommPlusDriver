@@ -96,13 +96,18 @@ namespace S7CommPlusDriver
             }
             else if (deviceVersion.StartsWith("2")) // S7-1200 (2xx)
             {
-                if (fwVerNo < 403)
+                // a4webdev: this floor exists because secure communication does, so it
+                // must not reject a CPU we deliberately reached WITHOUT encryption.
+                // Below V4.3 the CPU cannot do TLS at all, which is precisely the case
+                // PlaintextSessionActive represents - see Patches_a4webdev_Plaintext.cs.
+                if (fwVerNo < 403 && !PlaintextSessionActive)
                 {
                     Console.WriteLine("S7CommPlusConnection - Legitimate: Firmware version is not supported!");
                     return S7Consts.errCliFirmwareNotSupported;
                 }
                 if (fwVerNo < 407)
                 {
+                    // Includes every plaintext-session CPU, since those are all < V4.3.
                     legacyLegitimation = true;
                 }
             }
@@ -121,6 +126,27 @@ namespace S7CommPlusDriver
                 return S7Consts.errCliDeviceNotSupported;
             }
 
+            // a4webdev: on a plaintext session, do not ask for the protection level at
+            // all. A pre-V4.3 CPU does not implement attribute EffectiveProtectionLevel
+            // (1842); the engineering tool reads addresses 300, 3753 and 7920 on such a
+            // CPU and never 1842. Given the same firmware demonstrably closes the
+            // connection over an unsupported SystemLimits read, an unsupported attribute
+            // read is not worth risking the session for.
+            //
+            // Safe to skip because the value is INFORMATIONAL FOR THE CLIENT - the CPU
+            // is the access-enforcement point regardless of what we know locally. Not
+            // knowing the level cannot grant anything; reads that need rights we lack
+            // still fail on the CPU's own authority. ProtectionLevelKnown records that
+            // the value is unknown, so callers report that rather than "unprotected".
+            if (PlaintextSessionActive)
+            {
+                Console.WriteLine("S7CommPlusConnection - Legitimate: skipping the protection-level read on a"
+                    + " plaintext session (attribute " + Ids.EffectiveProtectionLevel + " is not implemented on"
+                    + " this firmware). The CPU still enforces its own access protection.");
+                ProtectionLevelKnown = false;
+                return 0;
+            }
+
             // Get current protection level
             var getVarSubstreamedReq = new GetVarSubstreamedRequest(ProtocolVersion.V2);
             getVarSubstreamedReq.InObjectId = m_SessionId;
@@ -136,13 +162,41 @@ namespace S7CommPlusDriver
             WaitForNewS7plusReceived(m_ReadTimeout);
             if (m_LastError != 0)
             {
-                m_client.Disconnect();
-                return m_LastError;
+                // a4webdev: NOT fatal on a plaintext session. A pre-V4.3 CPU does not
+                // implement attribute EffectiveProtectionLevel (1842) and simply never
+                // answers. The engineering tool does not ask for it on such a CPU
+                // either - in our capture it reads addresses 300, 3753 and 7920, never
+                // 1842.
+                //
+                // Continuing is safe because this value is INFORMATIONAL FOR THE
+                // CLIENT: the CPU is the access-enforcement point regardless of what we
+                // know locally. If it does require a password, the reads that follow
+                // fail on the CPU's own authority. Not knowing the level cannot grant
+                // anything.
+                if (!PlaintextSessionActive)
+                {
+                    m_client.Disconnect();
+                    return m_LastError;
+                }
+                Console.WriteLine("S7CommPlusConnection - Legitimate: protection level unavailable on this CPU"
+                    + " (attribute " + Ids.EffectiveProtectionLevel + " not implemented); continuing."
+                    + " The CPU still enforces its own access protection.");
+                ProtectionLevelKnown = false;
+                return 0;
             }
 
             var getVarSubstreamedRes = GetVarSubstreamedResponse.DeserializeFromPdu(m_ReceivedPDU);
             if (getVarSubstreamedRes == null)
             {
+                if (PlaintextSessionActive)
+                {
+                    // Same reasoning as the timeout above: an unparseable answer to an
+                    // attribute this firmware does not implement is not a session fault.
+                    Console.WriteLine("S7CommPlusConnection - Legitimate: protection level unreadable on this CPU;"
+                        + " continuing. The CPU still enforces its own access protection.");
+                    ProtectionLevelKnown = false;
+                    return 0;
+                }
                 Console.WriteLine("S7CommPlusConnection - Legitimate: GetVarSubstreamedResponse with Error!");
                 m_client.Disconnect();
                 return S7Consts.errIsoInvalidPDU;

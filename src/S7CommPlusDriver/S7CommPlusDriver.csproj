@@ -126,6 +126,7 @@
     <Compile Include="Core\Utils.cs" />
     <Compile Include="S7CommPlusConnection.cs" />
     <Compile Include="Patches_a4webdev.cs" />
+    <Compile Include="Patches_a4webdev_Plaintext.cs" />
     <Compile Include="Patches_a4webdev_Spike192.cs" />
     <Compile Include="Subscriptions\Subscription.cs" />
   </ItemGroup>

@@ -426,20 +426,40 @@ namespace S7CommPlusDriver
             sslRes = InitSslResponse.DeserializeFromPdu(m_ReceivedPDU);
             if (sslRes == null)
             {
-                Console.WriteLine("S7CommPlusConnection - Connect: InitSslResponse with Error!");
-                m_client.Disconnect();
-                return m_LastError;
+                // a4webdev: DeserializeFromPdu returns null both when the CPU
+                // REFUSED InitSsl (functioncode Error2) and when the response was
+                // malformed. Those need opposite handling, so separate them here.
+                // See Patches_a4webdev_Plaintext.cs.
+                if (!TryContinueWithoutEncryption())
+                {
+                    Console.WriteLine("S7CommPlusConnection - Connect: InitSslResponse with Error!");
+                    m_client.Disconnect();
+                    // a4webdev: was `return m_LastError`, which is 0 here because it
+                    // is reset before the wait above - so Connect() reported SUCCESS
+                    // on a socket it had just closed, and every later read timed out
+                    // with no indication why. Every sibling branch in this method
+                    // returns errIsoInvalidPDU; this one now does too.
+                    return S7Consts.errIsoInvalidPDU;
+                }
             }
 
             #endregion
 
             #region Step 2: Activate TLS. Everything from here onwards is TLS encrypted.
 
-            res = m_client.SslActivate();
-            if (res != 0)
+            // a4webdev: skipped when the CPU refused InitSsl and the caller opted in.
+            // S7Client is already in its plaintext state - m_SslActive is false and
+            // that is how the InitSsl request above was sent - so not calling
+            // SslActivate() simply leaves the transport as it is. Everything from
+            // here on is identical, just unencrypted.
+            if (!PlaintextSessionActive)
             {
-                m_client.Disconnect();
-                return res;
+                res = m_client.SslActivate();
+                if (res != 0)
+                {
+                    m_client.Disconnect();
+                    return res;
+                }
             }
 
             #endregion
@@ -510,11 +530,36 @@ namespace S7CommPlusDriver
             #endregion
 
             #region Step 5: Read SystemLimits
-            res = m_CommRessources.ReadMax(this);
-            if (res != 0)
+            // a4webdev: SKIPPED on a plaintext session, and it must be skipped rather
+            // than merely tolerated.
+            //
+            // A pre-V4.3 CPU does not answer this GetMultiVariables on SystemLimits -
+            // it CLOSES THE CONNECTION. Measured: our request goes out, and 3 ms later
+            // the CPU sends FIN then RST. Everything the driver does afterwards is
+            // written into a dead socket and looks like a read timeout instead of a
+            // disconnect, because S7Client.Send() returns void and cannot report a
+            // failed write.
+            //
+            // The engineering tool never issues this request against such a CPU: in our
+            // capture its only GetMultiVariables requests are the diagnostic-buffer
+            // reads themselves. So this is not a capability we are giving up, it is a
+            // request that should not be sent.
+            //
+            // Nothing downstream needs it. The limits only chunk read/write requests,
+            // and TagsPerRead/WriteRequestMax already default to 20.
+            if (PlaintextSessionActive)
             {
-                m_client.Disconnect();
-                return res;
+                Console.WriteLine("S7CommPlusConnection - Connect: skipping SystemLimits on a plaintext session"
+                    + " (this CPU closes the connection on that request); using default request chunking.");
+            }
+            else
+            {
+                res = m_CommRessources.ReadMax(this);
+                if (res != 0)
+                {
+                    m_client.Disconnect();
+                    return res;
+                }
             }
             #endregion
 

@@ -105,6 +105,12 @@ namespace S7CommPlusDriver
             try
             {
                 var req = new GetMultiVariablesAttrRequest(ProtocolVersion.V2);
+                // Integrity ids arrived with secure communication, so a CPU that cannot
+                // do TLS does not expect one. Measured: against firmware V3.0 our request
+                // was byte-identical to the engineering tool's except for one extra byte,
+                // the integrity-id VLQ, and the CPU never answered. The tool sends no
+                // integrity id at all to that CPU.
+                req.WithIntegrityId = !PlaintextSessionActive;
                 req.LinkId = linkId;
                 req.AttributeIds = attributeIds;
 
