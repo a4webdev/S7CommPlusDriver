@@ -38,6 +38,10 @@ namespace S7CommPlusDriver
             // an error, so reject it before any result can be trusted.
             if (address > UInt16.MaxValue) return S7Consts.errIsoInvalidPDU;
             var req = new GetVarSubstreamedRequest(ProtocolVersion.V2);
+            // #212: integrity ids arrived with secure communication, so a CPU that
+            // cannot encrypt does not expect one and will not answer a request carrying
+            // it. Same correction as ReadAttributes below.
+            req.WithIntegrityId = !PlaintextSessionActive;
             req.InObjectId = inObjectId;
             req.SessionId = m_SessionId;
             req.Address = (ushort)address;
@@ -63,6 +67,15 @@ namespace S7CommPlusDriver
         public int GetProtectionLevels(out uint effective, out uint active)
         {
             effective = 0; active = 0;
+            // #212: a CPU that refused encryption does not implement these attributes
+            // (1842/1843), and asking anyway is not harmless - the same firmware closes
+            // the connection on an unsupported SystemLimits read. Since the bridge calls
+            // this on EVERY connect, issuing them here would break the session before
+            // the caller ever gets to read anything.
+            //
+            // ProtectionLevelKnown is already false in this state (Legitimation skips the
+            // read), so callers report "unknown" rather than mistaking 0 for full access.
+            if (PlaintextSessionActive) return 0;
             int r1 = ReadUIntAttribute(m_SessionId, (uint)Ids.EffectiveProtectionLevel, out effective);
             if (r1 != 0) return r1;
             return ReadUIntAttribute(m_SessionId, (uint)Ids.ActiveProtectionLevel, out active);
