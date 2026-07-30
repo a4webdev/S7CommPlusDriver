@@ -354,6 +354,30 @@ namespace S7CommPlusDriver
 
             alarmList = new List<AlarmsDai>();
 
+            // a4webdev #213: NOT sent on a plaintext session, and it must be skipped
+            // rather than attempted-and-tolerated.
+            //
+            // MEASURED on firmware V3.0.2 (capture 210-213-alarms-1.pcapng): this
+            // ExploreRequest goes out and the CPU answers with FIN then RST - it does not
+            // refuse the request, it drops the connection. Anything the caller does after
+            // that is written into a dead socket, and because S7Client.Send() returns void
+            // the failure is invisible and resurfaces later as an unrelated read timeout.
+            //
+            // That is why the old behaviour was worse than a plain failure: it reported
+            // "0 active alarms" - a plausible, wrong answer - and destroyed the session on
+            // the way out, so the NEXT read failed instead.
+            //
+            // Same remedy as the SystemLimits read in #212, though a different request
+            // class (Explore, not GetMultiVariables): do not send it. Returning a distinct
+            // error lets the caller say "unavailable on this firmware" instead of "none".
+            if (PlaintextSessionActive)
+            {
+                Console.WriteLine("S7CommPlusConnection - GetActiveAlarms: not supported on a plaintext"
+                    + " session (this firmware drops the connection on the alarm Explore request);"
+                    + " reporting unavailable rather than an empty list.");
+                return S7Consts.errCliFunctionNotImplemented;
+            }
+
             var exploreReq = new ExploreRequest(ProtocolVersion.V2);
             exploreReq.ExploreId = Ids.NativeObjects_theAlarmSubsystem_Rid;
             exploreReq.ExploreRequestId = Ids.AlarmSubsystem_itsUpdateRelevantDAI;
