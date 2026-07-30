@@ -159,6 +159,26 @@ namespace S7CommPlusDriver
                 funcObj.SessionId = m_SessionId;
             }
 
+            // a4webdev #213: integrity ids arrived WITH secure communication, so a CPU that
+            // cannot encrypt does not expect one - and does not merely ignore it. Measured:
+            // an Explore carrying an integrity id makes firmware V3.0.2 answer with FIN
+            // then RST, killing the session (captures 210-213-alarms-1, 210-213-browse-1).
+            //
+            // Fixed HERE, at the single choke point every request passes through, rather
+            // than per request type. #212 patched ReadAttributes and ReadUIntAttribute
+            // individually, which fixed the two calls that were being exercised at the time
+            // and left every other request - Explore among them - still broken. One guard
+            // covers them all, including requests not yet exercised.
+            //
+            // Evidence this is the right layer: the engineering tool DOES use Explore
+            // successfully against this CPU (209-04-cold-diagbuffer-1.pcapng f171/f177/
+            // f188/f203, multi-fragment responses), so the request form is fine - it was
+            // our extra field that the CPU rejected.
+            if (PlaintextSessionActive)
+            {
+                funcObj.WithIntegrityId = false;
+            }
+
             // Insert SequenceNumber and IntegrityId, if neccessary for object type and state of communication
             funcObj.SequenceNumber = GetNextSequenceNumber();
             if (funcObj.WithIntegrityId)
