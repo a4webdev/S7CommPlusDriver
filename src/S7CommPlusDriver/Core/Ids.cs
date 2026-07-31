@@ -98,6 +98,14 @@ namespace S7CommPlusDriver
         public const int AS_CGS_AllStatesInfo = 3474;
         public const int AS_CGS_Timestamp = 3475;
         public const int AS_CGS_AssociatedValues = 3476;
+        // a4webdev #221: the ACTUAL CPU operating state, as distinct from
+        // CPUexecUnit_operatingStateReq (2167) above, which is the REQUESTED state and
+        // reads 0 on a running CPU. Naming mirrors DB_ValueInitial / DB_ValueActual.
+        // Observed values: 0x08 = RUN, 0x04 = STOP. NOTE the request enum differs
+        // (0x03 = RUN, 0x01 = STOP) - they are not interchangeable.
+        // Located by packet capture against S7-1200 1214C V3.0.2 plaintext; see
+        // TiaCommander agents/research/findings/221-spike1-opstate.md.
+        public const int CPUexecUnit_operatingStateActual = 3486;
         public const int AS_CGS_AckTimestamp = 3646;
         public const int ControllerArea_ValueInitial = 3735;
         public const int ControllerArea_ValueActual = 3736;

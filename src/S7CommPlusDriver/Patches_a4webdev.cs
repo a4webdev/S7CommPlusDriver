@@ -85,11 +85,102 @@ namespace S7CommPlusDriver
         /// #184: CPU operating state via the exec-unit object. Returns the raw
         /// protocol value; caller maps to RUN/STOP/STARTUP. May return an error
         /// if the attribute is not readable on this firmware - recorded, not hidden.
+        ///
+        /// ⚠ #221: THIS READS THE *REQUESTED* STATE (attribute 2167), NOT THE ACTUAL
+        /// ONE. #184 spike5 measured it returning 0 on a running CPU and recorded the
+        /// actual-state id as unknown. It is now known - see
+        /// GetPlcOperatingStateActual below. Kept because it is the write-side
+        /// counterpart and its enum (0x03 = RUN, 0x01 = STOP) is what a mode COMMAND
+        /// carries; do not use it to answer "is the PLC running".
         /// </summary>
         public int GetPlcOperatingState(out uint state)
         {
             return ReadUIntAttribute((uint)Ids.NativeObjects_theCPUexecUnit_Rid,
                                      (uint)Ids.CPUexecUnit_operatingStateReq, out state);
+        }
+
+        /// <summary>
+        /// #221: the ACTUAL CPU operating state (attribute 3486 on the exec-unit
+        /// object). This is the one that answers "is the PLC running".
+        ///
+        /// Located by packet capture, not by guessing: TIA's own reconnect burst
+        /// against a plaintext CPU carries this attribute in its response, and its
+        /// value tracked an operator-driven RUN -> STOP -> RUN with the mode command
+        /// sitting between the two reads. Full evidence and the rejected candidates
+        /// are in TiaCommander agents/research/findings/221-spike1-opstate.md.
+        ///
+        /// RAW VALUE ONLY - mapping is the caller's business, deliberately, so a
+        /// firmware that answers with an unexpected value surfaces as "unknown"
+        /// rather than being silently coerced into RUN or STOP.
+        ///
+        ///   0x08 = RUN      0x04 = STOP
+        ///
+        /// ⚠ The REQUEST enum is DIFFERENT (0x03 = RUN, 0x01 = STOP). Reusing one
+        /// mapping for both paths produces code that compiles and lies.
+        ///
+        /// Read-only. Returns an S7Consts error if the attribute is not readable on
+        /// this firmware - which is a real possibility and must be reported, never
+        /// defaulted.
+        /// </summary>
+        public int GetPlcOperatingStateActual(out uint state)
+        {
+            state = 0;
+
+            // Route 1: GetVarSubstreamed against the exec-unit object - the same shape
+            // the protection level uses.
+            // MEASURED 31-07-2026 on S7-1200 V3.0.2: this route does NOT answer for
+            // attribute 3486. Kept as the first attempt because it is the cheap one and
+            // may well serve on other firmware; its failure is not fatal.
+            uint v;
+            int r = ReadUIntAttribute((uint)Ids.NativeObjects_theCPUexecUnit_Rid,
+                                      (uint)Ids.CPUexecUnit_operatingStateActual, out v);
+            if (r == 0 && v != 0) { state = v; return 0; }
+
+            // Route 2: GetMultiVariables - the transport TIA itself uses for this
+            // attribute (observed opcode 0x31). ReadAttributes hands back the raw PDU
+            // because interpreting it is the caller's business.
+            byte[] pdu;
+            int r2 = ReadAttributes((uint)Ids.NativeObjects_theCPUexecUnit_Rid,
+                                    new List<uint> { (uint)Ids.CPUexecUnit_operatingStateActual },
+                                    out pdu);
+            if (r2 != 0 || pdu == null) return (r != 0) ? r : r2;
+
+            if (TryScanOperatingState(pdu, out state)) return 0;
+            return S7Consts.errIsoInvalidPDU;
+        }
+
+        /// <summary>
+        /// #221: pull the operating-state value out of a raw response PDU.
+        ///
+        /// Scans for the attribute id 3486 in its varuint-32 wire form (0x9B 0x1E)
+        /// followed by its observed type/length prefix 0x00 0x08, and takes the next
+        /// byte as the value. That is precisely the layout captured from TIA's own
+        /// reconnect burst:
+        ///
+        ///     9b 1e  00 08  [08]      RUN
+        ///     9b 1e  00 08  [04]      STOP
+        ///
+        /// A scan rather than a full deserialize because the surrounding response is a
+        /// multi-attribute structure this driver has no parser for, and #192 showed the
+        /// shipped deserializer silently drops about half of such a response. Scanning
+        /// the bytes we positively identified is narrower and honest about its scope.
+        ///
+        /// Returns false when the pattern is absent - the caller must then report
+        /// UNKNOWN. It must never fall back to a default state.
+        /// </summary>
+        internal static bool TryScanOperatingState(byte[] pdu, out uint state)
+        {
+            state = 0;
+            if (pdu == null || pdu.Length < 5) return false;
+            for (int i = 0; i + 4 < pdu.Length; i++)
+            {
+                if (pdu[i] == 0x9B && pdu[i + 1] == 0x1E && pdu[i + 2] == 0x00 && pdu[i + 3] == 0x08)
+                {
+                    state = pdu[i + 4];
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
