@@ -98,14 +98,30 @@ namespace S7CommPlusDriver
         public const int AS_CGS_AllStatesInfo = 3474;
         public const int AS_CGS_Timestamp = 3475;
         public const int AS_CGS_AssociatedValues = 3476;
-        // a4webdev #221: the ACTUAL CPU operating state, as distinct from
-        // CPUexecUnit_operatingStateReq (2167) above, which is the REQUESTED state and
-        // reads 0 on a running CPU. Naming mirrors DB_ValueInitial / DB_ValueActual.
-        // Observed values: 0x08 = RUN, 0x04 = STOP. NOTE the request enum differs
-        // (0x03 = RUN, 0x01 = STOP) - they are not interchangeable.
-        // Located by packet capture against S7-1200 1214C V3.0.2 plaintext; see
-        // TiaCommander agents/research/findings/221-spike1-opstate.md.
-        public const int CPUexecUnit_operatingStateActual = 3486;
+        // a4webdev #221: RETRACTED. There is no attribute 3486.
+        //
+        // A first reading of a packet capture took the bytes `9b 1e` in a response as a
+        // varuint attribute id (3486). They are not. In both GetMultiVariables responses
+        // and Notifications those two bytes are the ITEM framing:
+        //     9b   item return code (a VLQ item reference follows)
+        //     1e   item reference = 30
+        //     00   PValue flags
+        //     08   PValue datatype = Datatype.DInt
+        //     08 / 04   the value: 8 = RUN, 4 = STOP
+        // Confirmed by the adjacent item in the same response - `9b 1f 00 14 ...`,
+        // i.e. code, ref 31, flags, datatype 0x14 - which only parses as item framing.
+        //
+        // The constant that briefly stood here was therefore wrong, and reads against it
+        // correctly returned nothing on BOTH V3.0.2 and V4.6. That is why they failed.
+        //
+        // What IS established: the CPU operating state travels as an ITEM in a
+        // GetMultiVariables (0x054c) response, addressed by an ItemAddress
+        // (SymbolCrc / AccessArea / AccessSubArea / LID list) - NOT by an attribute id.
+        // The item reference is chosen by the requester, so 30 is TIA's numbering and
+        // carries no meaning for another client.
+        //
+        // Full evidence, including the retraction, in TiaCommander
+        // agents/research/findings/221-spike1-opstate.md.
         public const int AS_CGS_AckTimestamp = 3646;
         public const int ControllerArea_ValueInitial = 3735;
         public const int ControllerArea_ValueActual = 3736;

@@ -122,59 +122,66 @@ namespace S7CommPlusDriver
         /// this firmware - which is a real possibility and must be reported, never
         /// defaulted.
         /// </summary>
+        /// <summary>
+        /// #221 RETRACTED - DO NOT USE, and do not "fix" it by guessing another id.
+        ///
+        /// This shipped briefly reading a supposed attribute 3486. THERE IS NO
+        /// ATTRIBUTE 3486. The id came from misreading `9b 1e` in a captured response
+        /// as a varuint attribute id, when those bytes are item framing:
+        ///     9b = item return code, 1e = item reference 30, 00 = PValue flags,
+        ///     08 = Datatype.DInt, then the value (8 = RUN, 4 = STOP).
+        ///
+        /// Both routes below were MEASURED to return nothing on V3.0.2 AND V4.6, which
+        /// is the correct outcome for a request naming an attribute that does not exist.
+        ///
+        /// WHAT IS ACTUALLY ESTABLISHED: the operating state arrives as an ITEM in a
+        /// GetMultiVariables (0x054c) response and in Notifications (0x33), addressed by
+        /// an ItemAddress - SymbolCrc / AccessArea / AccessSubArea / LID list - not by an
+        /// attribute id. Implementing it means building that ItemAddress, which is not
+        /// yet decoded. See TiaCommander agents/research/findings/221-spike1-opstate.md.
+        ///
+        /// Kept, returning an error, so the negative result is not rediscovered. It never
+        /// returns a default: callers must render UNKNOWN, because a CPU whose state
+        /// could not be read is not a stopped CPU.
+        /// </summary>
+        [Obsolete("#221: reads a nonexistent attribute. The operating state is addressed by ItemAddress, not by attribute id - see 221-spike1-opstate.md.")]
         public int GetPlcOperatingStateActual(out uint state)
         {
             state = 0;
-
-            // Route 1: GetVarSubstreamed against the exec-unit object - the same shape
-            // the protection level uses.
-            // MEASURED 31-07-2026 on S7-1200 V3.0.2: this route does NOT answer for
-            // attribute 3486. Kept as the first attempt because it is the cheap one and
-            // may well serve on other firmware; its failure is not fatal.
-            uint v;
-            int r = ReadUIntAttribute((uint)Ids.NativeObjects_theCPUexecUnit_Rid,
-                                      (uint)Ids.CPUexecUnit_operatingStateActual, out v);
-            if (r == 0 && v != 0) { state = v; return 0; }
-
-            // Route 2: GetMultiVariables - the transport TIA itself uses for this
-            // attribute (observed opcode 0x31). ReadAttributes hands back the raw PDU
-            // because interpreting it is the caller's business.
-            byte[] pdu;
-            int r2 = ReadAttributes((uint)Ids.NativeObjects_theCPUexecUnit_Rid,
-                                    new List<uint> { (uint)Ids.CPUexecUnit_operatingStateActual },
-                                    out pdu);
-            if (r2 != 0 || pdu == null) return (r != 0) ? r : r2;
-
-            if (TryScanOperatingState(pdu, out state)) return 0;
             return S7Consts.errIsoInvalidPDU;
         }
 
         /// <summary>
-        /// #221: pull the operating-state value out of a raw response PDU.
+        /// #221: recover the operating state from a raw GetMultiVariables response or
+        /// Notification PDU, given the ITEM REFERENCE the request asked under.
         ///
-        /// Scans for the attribute id 3486 in its varuint-32 wire form (0x9B 0x1E)
-        /// followed by its observed type/length prefix 0x00 0x08, and takes the next
-        /// byte as the value. That is precisely the layout captured from TIA's own
-        /// reconnect burst:
+        /// Wire shape, confirmed against captures and against Notification.cs's own item
+        /// loop:
+        ///     9b &lt;itemref VLQ&gt; 00 08 &lt;value&gt;
+        ///     ^^                ^^ ^^ ^^
+        ///     |                 |  |  +-- 8 = RUN, 4 = STOP
+        ///     |                 |  +----- Datatype.DInt
+        ///     |                 +-------- PValue flags
+        ///     +-------------------------- item return code (VLQ item ref follows)
         ///
-        ///     9b 1e  00 08  [08]      RUN
-        ///     9b 1e  00 08  [04]      STOP
+        /// THE ITEM REFERENCE IS CHOSEN BY THE REQUESTER. TIA used 30; that number means
+        /// nothing to another client, so it is a parameter here rather than a constant -
+        /// hardcoding 30 would be copying a coincidence.
         ///
-        /// A scan rather than a full deserialize because the surrounding response is a
-        /// multi-attribute structure this driver has no parser for, and #192 showed the
-        /// shipped deserializer silently drops about half of such a response. Scanning
-        /// the bytes we positively identified is narrower and honest about its scope.
+        /// A scan rather than a full deserialize: #192 showed the shipped deserializer
+        /// silently drops about half of such a response, so scanning the bytes we
+        /// positively identified is narrower and honest about its scope.
         ///
-        /// Returns false when the pattern is absent - the caller must then report
-        /// UNKNOWN. It must never fall back to a default state.
+        /// Returns false when the pattern is absent. The caller must then report UNKNOWN
+        /// and must never fall back to a default state.
         /// </summary>
-        internal static bool TryScanOperatingState(byte[] pdu, out uint state)
+        internal static bool TryScanOperatingState(byte[] pdu, byte itemRef, out uint state)
         {
             state = 0;
             if (pdu == null || pdu.Length < 5) return false;
             for (int i = 0; i + 4 < pdu.Length; i++)
             {
-                if (pdu[i] == 0x9B && pdu[i + 1] == 0x1E && pdu[i + 2] == 0x00 && pdu[i + 3] == 0x08)
+                if (pdu[i] == 0x9B && pdu[i + 1] == itemRef && pdu[i + 2] == 0x00 && pdu[i + 3] == 0x08)
                 {
                     state = pdu[i + 4];
                     return true;
