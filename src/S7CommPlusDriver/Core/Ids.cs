@@ -98,30 +98,46 @@ namespace S7CommPlusDriver
         public const int AS_CGS_AllStatesInfo = 3474;
         public const int AS_CGS_Timestamp = 3475;
         public const int AS_CGS_AssociatedValues = 3476;
-        // a4webdev #221: RETRACTED. There is no attribute 3486.
+        // a4webdev #221: the CPU operating state. READ THE WHOLE COMMENT before using it.
         //
-        // A first reading of a packet capture took the bytes `9b 1e` in a response as a
-        // varuint attribute id (3486). They are not. In both GetMultiVariables responses
-        // and Notifications those two bytes are the ITEM framing:
-        //     9b   item return code (a VLQ item reference follows)
-        //     1e   item reference = 30
-        //     00   PValue flags
-        //     08   PValue datatype = Datatype.DInt
-        //     08 / 04   the value: 8 = RUN, 4 = STOP
-        // Confirmed by the adjacent item in the same response - `9b 1f 00 14 ...`,
-        // i.e. code, ref 31, flags, datatype 0x14 - which only parses as item framing.
+        // 3486 is a LID, not an attribute id. It is reached through an ItemAddress:
         //
-        // The constant that briefly stood here was therefore wrong, and reads against it
-        // correctly returned nothing on BOTH V3.0.2 and V4.6. That is why they failed.
+        //     SymbolCrc     = 0
+        //     AccessArea    = 52    NativeObjects_theCPUexecUnit_Rid
+        //     AccessSubArea = 2237  CPUexecUnit_OperatingStateSubArea
+        //     LID           = { 3486 }
         //
-        // What IS established: the CPU operating state travels as an ITEM in a
-        // GetMultiVariables (0x054c) response, addressed by an ItemAddress
-        // (SymbolCrc / AccessArea / AccessSubArea / LID list) - NOT by an attribute id.
-        // The item reference is chosen by the requester, so 30 is TIA's numbering and
-        // carries no meaning for another client.
+        // Values: 8 = RUN, 4 = STOP. The WRITE enum is different (03 = RUN, 01 = STOP) -
+        // see CPUexecUnit_operatingStateReq. Reusing one mapping for both paths produces
+        // code that compiles and lies.
         //
-        // Full evidence, including the retraction, in TiaCommander
-        // agents/research/findings/221-spike1-opstate.md.
+        // The same value is also delivered as member 3486 of struct 3481.
+        //
+        // HISTORY, because this id has now been wrong twice in opposite directions:
+        //   1. It was first published as an ATTRIBUTE id. That was wrong - ReadAttributes
+        //      addresses by attribute id and can never reach a LID, which is exactly why
+        //      reads against it measured nothing on BOTH V3.0.2 and V4.6.
+        //   2. It was then RETRACTED as "there is no 3486", on the grounds that the bytes
+        //      `9b 1e` were item framing (code 0x9b + item ref 30). THAT retraction was
+        //      itself wrong. In the #221 captures every top-level item uses code 0x92 with
+        //      a raw UInt32 ref - 101 items, 101 times 0x92, never 0x9b - and the `9b 1e`
+        //      bytes sit INSIDE a Datatype.Struct value, where ValueStruct.Deserialize
+        //      reads them as a VLQ member id terminated by 0. They are the id 3486.
+        //
+        // So: the VALUE was always right; the ADDRESSING MODE was wrong. Do not delete this
+        // constant again, and do not read it with ReadAttributes.
+        //
+        // Derived independently of those bytes, from TIA's own subscription-create frame
+        // (CreateObject 0x04ca, attribute SubscriptionReferenceList 1048), parsed against
+        // Subscriptions/Subscription.cs :: GetSubscriptionListArray, self-checked by the
+        // array's declared element count and by each record's own field count. Identical in
+        // all 6 such frames across all 8 captures.
+        //
+        // Full evidence: TiaCommander agents/research/findings/221-itemaddress-decode.md
+        public const int CPUexecUnit_OperatingStateSubArea = 2237;
+        public const int CPUexecUnit_OperatingStateLID = 3486;
+        public const int CPUexecUnit_OperatingStateStruct = 3481;
+
         public const int AS_CGS_AckTimestamp = 3646;
         public const int ControllerArea_ValueInitial = 3735;
         public const int ControllerArea_ValueActual = 3736;

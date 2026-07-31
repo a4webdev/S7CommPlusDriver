@@ -123,28 +123,32 @@ namespace S7CommPlusDriver
         /// defaulted.
         /// </summary>
         /// <summary>
-        /// #221 RETRACTED - DO NOT USE, and do not "fix" it by guessing another id.
+        /// #221 NOT IMPLEMENTED - returns an error. Do not "fix" it by guessing an id.
         ///
-        /// This shipped briefly reading a supposed attribute 3486. THERE IS NO
-        /// ATTRIBUTE 3486. The id came from misreading `9b 1e` in a captured response
-        /// as a varuint attribute id, when those bytes are item framing:
-        ///     9b = item return code, 1e = item reference 30, 00 = PValue flags,
-        ///     08 = Datatype.DInt, then the value (8 = RUN, 4 = STOP).
+        /// This shipped briefly reading a supposed ATTRIBUTE 3486, via ReadAttributes.
+        /// That was wrong and the reads correctly measured nothing on V3.0.2 AND V4.6 -
+        /// but NOT because 3486 does not exist. It does. It is a LID, and ReadAttributes
+        /// addresses by attribute id, so it can never reach one. Wrong addressing mode,
+        /// not a wrong number. (An intermediate retraction claimed the id was a misread
+        /// of item framing; that retraction was itself wrong - see Ids.cs.)
         ///
-        /// Both routes below were MEASURED to return nothing on V3.0.2 AND V4.6, which
-        /// is the correct outcome for a request naming an attribute that does not exist.
+        /// THE ADDRESS IS NOW DECODED:
+        ///     SymbolCrc     = 0
+        ///     AccessArea    = Ids.NativeObjects_theCPUexecUnit_Rid          (52)
+        ///     AccessSubArea = Ids.CPUexecUnit_OperatingStateSubArea         (2237)
+        ///     LID           = { Ids.CPUexecUnit_OperatingStateLID }         (3486)
         ///
-        /// WHAT IS ACTUALLY ESTABLISHED: the operating state arrives as an ITEM in a
-        /// GetMultiVariables (0x054c) response and in Notifications (0x33), addressed by
-        /// an ItemAddress - SymbolCrc / AccessArea / AccessSubArea / LID list - not by an
-        /// attribute id. Implementing it means building that ItemAddress, which is not
-        /// yet decoded. See TiaCommander agents/research/findings/221-spike1-opstate.md.
+        /// Implementing this means issuing a GetMultiVariablesRequest with LinkId = 0 and
+        /// that ItemAddress - i.e. the driver's own ReadValues - or subscribing to it the
+        /// way TIA does. Neither is done yet, and neither has been tried against a CPU.
         ///
         /// Kept, returning an error, so the negative result is not rediscovered. It never
         /// returns a default: callers must render UNKNOWN, because a CPU whose state
         /// could not be read is not a stopped CPU.
+        ///
+        /// Evidence: TiaCommander agents/research/findings/221-itemaddress-decode.md
         /// </summary>
-        [Obsolete("#221: reads a nonexistent attribute. The operating state is addressed by ItemAddress, not by attribute id - see 221-spike1-opstate.md.")]
+        [Obsolete("#221: not implemented. The address is decoded (AccessArea 52 / SubArea 2237 / LID 3486) but the read is not built - see 221-itemaddress-decode.md.")]
         public int GetPlcOperatingStateActual(out uint state)
         {
             state = 0;
@@ -152,28 +156,34 @@ namespace S7CommPlusDriver
         }
 
         /// <summary>
-        /// #221: recover the operating state from a raw GetMultiVariables response or
-        /// Notification PDU, given the ITEM REFERENCE the request asked under.
+        /// #221 ⚠ NOT FIT FOR THE S7-1200 V3.0.2 PATH. Untested, and known wrong for the
+        /// only firmware we have captures from. Do not trust it as written; rewrite it
+        /// alongside the first real read, where it can be tested against a live PDU.
         ///
-        /// Wire shape, confirmed against captures and against Notification.cs's own item
-        /// loop:
-        ///     9b &lt;itemref VLQ&gt; 00 08 &lt;value&gt;
-        ///     ^^                ^^ ^^ ^^
-        ///     |                 |  |  +-- 8 = RUN, 4 = STOP
-        ///     |                 |  +----- Datatype.DInt
-        ///     |                 +-------- PValue flags
-        ///     +-------------------------- item return code (VLQ item ref follows)
+        /// It scans for `9b &lt;itemref&gt; 00 08 &lt;value&gt;`, on the belief that 0x9b is the item
+        /// return code. In the #221 captures that pattern is NEVER a top-level item:
         ///
-        /// THE ITEM REFERENCE IS CHOSEN BY THE REQUESTER. TIA used 30; that number means
-        /// nothing to another client, so it is a parameter here rather than a constant -
-        /// hardcoding 30 would be copying a coincidence.
+        ///   - Every one of the 101 top-level items across all 8 captures uses item code
+        ///     0x92 with a RAW UInt32 reference - the S7-1200 form documented at
+        ///     Notification.cs:95. The scalar delivery is `92 &lt;u32 ref&gt; 00 08 &lt;value&gt;`,
+        ///     which this scan cannot match at all.
+        ///   - The `9b xx` sequences that DO appear sit inside a Datatype.Struct value,
+        ///     where they are VLQ MEMBER IDS. Calling this with itemRef = 0x1e would match
+        ///     struct member 3486 - the right answer for the wrong reason.
+        ///   - `byte itemRef` cannot express a VLQ reference above 127 in any case.
         ///
-        /// A scan rather than a full deserialize: #192 showed the shipped deserializer
-        /// silently drops about half of such a response, so scanning the bytes we
-        /// positively identified is narrower and honest about its scope.
+        /// The item framing is firmware-dependent (0x92 here, 0x9b on a 1500), so the
+        /// replacement must handle both, and the .88.81 V4.6 positive control is what
+        /// proves it.
+        ///
+        /// A scan rather than a full deserialize was, and remains, the right instinct:
+        /// #192 showed the shipped deserializer silently drops about half of such a
+        /// response.
         ///
         /// Returns false when the pattern is absent. The caller must then report UNKNOWN
         /// and must never fall back to a default state.
+        ///
+        /// Evidence: TiaCommander agents/research/findings/221-itemaddress-decode.md
         /// </summary>
         internal static bool TryScanOperatingState(byte[] pdu, byte itemRef, out uint state)
         {
