@@ -13,6 +13,7 @@
 
 using System;
 using System.Collections.Generic;
+using S7CommPlusDriver.ClientApi;
 
 namespace S7CommPlusDriver
 {
@@ -123,81 +124,81 @@ namespace S7CommPlusDriver
         /// defaulted.
         /// </summary>
         /// <summary>
-        /// #221 NOT IMPLEMENTED - returns an error. Do not "fix" it by guessing an id.
+        /// #223: the ACTUAL CPU operating state - the value that answers "is this PLC
+        /// running". Read-only.
         ///
-        /// This shipped briefly reading a supposed ATTRIBUTE 3486, via ReadAttributes.
-        /// That was wrong and the reads correctly measured nothing on V3.0.2 AND V4.6 -
-        /// but NOT because 3486 does not exist. It does. It is a LID, and ReadAttributes
-        /// addresses by attribute id, so it can never reach one. Wrong addressing mode,
-        /// not a wrong number. (An intermediate retraction claimed the id was a misread
-        /// of item framing; that retraction was itself wrong - see Ids.cs.)
-        ///
-        /// THE ADDRESS IS NOW DECODED:
+        /// ADDRESSED AS A VARIABLE, NOT AS AN ATTRIBUTE. That distinction is the whole
+        /// history of this method:
         ///     SymbolCrc     = 0
         ///     AccessArea    = Ids.NativeObjects_theCPUexecUnit_Rid          (52)
         ///     AccessSubArea = Ids.CPUexecUnit_OperatingStateSubArea         (2237)
         ///     LID           = { Ids.CPUexecUnit_OperatingStateLID }         (3486)
         ///
-        /// Implementing this means issuing a GetMultiVariablesRequest with LinkId = 0 and
-        /// that ItemAddress - i.e. the driver's own ReadValues - or subscribing to it the
-        /// way TIA does. Neither is done yet, and neither has been tried against a CPU.
+        /// It shipped once reading a supposed ATTRIBUTE 3486 via ReadAttributes and
+        /// measured nothing on V3.0.2 AND V4.6 - correctly, but not for the stated
+        /// reason. 3486 is real; it is a LID, and ReadAttributes addresses by attribute
+        /// id, so it could never reach one. Wrong addressing mode, not a wrong number.
+        /// An intermediate retraction claimed the id was a misread of item framing; that
+        /// retraction was itself wrong. See Ids.cs.
         ///
-        /// Kept, returning an error, so the negative result is not rediscovered. It never
-        /// returns a default: callers must render UNKNOWN, because a CPU whose state
-        /// could not be read is not a stopped CPU.
+        /// BUILT ON PlcTag DELIBERATELY. ReadValues(ItemAddress) would work equally well
+        /// for a one-shot, but Subscription.GetSubscriptionListArray consumes
+        /// tag.Address, so building the SAME PlcTag here means the subscription path can
+        /// reuse this exact tag shape without a second, divergent definition of where
+        /// the operating state lives.
         ///
-        /// Evidence: TiaCommander agents/research/findings/221-itemaddress-decode.md
-        /// </summary>
-        [Obsolete("#221: not implemented. The address is decoded (AccessArea 52 / SubArea 2237 / LID 3486) but the read is not built - see 221-itemaddress-decode.md.")]
-        public int GetPlcOperatingStateActual(out uint state)
-        {
-            state = 0;
-            return S7Consts.errIsoInvalidPDU;
-        }
-
-        /// <summary>
-        /// #221 ⚠ NOT FIT FOR THE S7-1200 V3.0.2 PATH. Untested, and known wrong for the
-        /// only firmware we have captures from. Do not trust it as written; rewrite it
-        /// alongside the first real read, where it can be tested against a live PDU.
+        /// RAW VALUE ONLY - mapping is the caller's business, deliberately, so a firmware
+        /// answering with an unexpected value surfaces as "unknown" rather than being
+        /// silently coerced into RUN or STOP.
         ///
-        /// It scans for `9b &lt;itemref&gt; 00 08 &lt;value&gt;`, on the belief that 0x9b is the item
-        /// return code. In the #221 captures that pattern is NEVER a top-level item:
+        ///   0x08 = RUN      0x04 = STOP
         ///
-        ///   - Every one of the 101 top-level items across all 8 captures uses item code
-        ///     0x92 with a RAW UInt32 reference - the S7-1200 form documented at
-        ///     Notification.cs:95. The scalar delivery is `92 &lt;u32 ref&gt; 00 08 &lt;value&gt;`,
-        ///     which this scan cannot match at all.
-        ///   - The `9b xx` sequences that DO appear sit inside a Datatype.Struct value,
-        ///     where they are VLQ MEMBER IDS. Calling this with itemRef = 0x1e would match
-        ///     struct member 3486 - the right answer for the wrong reason.
-        ///   - `byte itemRef` cannot express a VLQ reference above 127 in any case.
+        /// ⚠ The REQUEST enum is DIFFERENT (0x03 = RUN, 0x01 = STOP) - see
+        /// GetPlcOperatingState. Reusing one mapping for both paths produces code that
+        /// compiles and lies.
         ///
-        /// The item framing is firmware-dependent (0x92 here, 0x9b on a 1500), so the
-        /// replacement must handle both, and the .88.81 V4.6 positive control is what
-        /// proves it.
+        /// ⚠ `state` is a SIGNED DInt and is NOT range-checked here. A caller that
+        /// narrows it to a byte will wrap 260 onto 0x04 and report a confident STOP.
+        /// Range-check before mapping.
         ///
-        /// A scan rather than a full deserialize was, and remains, the right instinct:
-        /// #192 showed the shipped deserializer silently drops about half of such a
-        /// response.
-        ///
-        /// Returns false when the pattern is absent. The caller must then report UNKNOWN
-        /// and must never fall back to a default state.
+        /// Returns an S7Consts error if the read failed or the item came back bad. It
+        /// never returns a default state: a CPU whose state could not be read is not a
+        /// stopped CPU, and ~4% of these reads fail - three of the first five observed
+        /// failures sat next to a mode change.
         ///
         /// Evidence: TiaCommander agents/research/findings/221-itemaddress-decode.md
         /// </summary>
-        internal static bool TryScanOperatingState(byte[] pdu, byte itemRef, out uint state)
+        public int GetPlcOperatingStateActual(out int state)
         {
             state = 0;
-            if (pdu == null || pdu.Length < 5) return false;
-            for (int i = 0; i + 4 < pdu.Length; i++)
+            try
             {
-                if (pdu[i] == 0x9B && pdu[i + 1] == itemRef && pdu[i + 2] == 0x00 && pdu[i + 3] == 0x08)
-                {
-                    state = pdu[i + 4];
-                    return true;
-                }
+                var addr = new ItemAddress((uint)Ids.NativeObjects_theCPUexecUnit_Rid,
+                                           (uint)Ids.CPUexecUnit_OperatingStateSubArea);
+                addr.SymbolCrc = 0;
+                addr.LID.Add((uint)Ids.CPUexecUnit_OperatingStateLID);
+
+                var tag = PlcTags.TagFactory("CPU_OperatingState", addr,
+                                             Softdatatype.S7COMMP_SOFTDATATYPE_DINT) as PlcTagDInt;
+                if (tag == null) return S7Consts.errCliFunNotAvailable;
+
+                int res = this.ReadTags(new List<PlcTag> { tag });
+                if (res != 0) return res;
+
+                // ReadTags returns 0 for the TRANSPORT while the ITEM can still have
+                // failed. Both have to be checked, or a bad item reads as a valid 0 -
+                // and 0 is not even in the state enum, so it would render as a
+                // confident "unknown state 0" rather than as the failure it is.
+                if (tag.LastReadError != 0) return S7Consts.errCliItemNotAvailable;
+                if (tag.Quality != PlcTagQC.TAG_QUALITY_GOOD) return S7Consts.errCliInvalidPlcAnswer;
+
+                state = tag.Value;
+                return 0;
             }
-            return false;
+            catch (Exception)
+            {
+                return S7Consts.errIsoInvalidPDU;
+            }
         }
 
         /// <summary>
